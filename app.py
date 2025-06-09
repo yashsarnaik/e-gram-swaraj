@@ -16,38 +16,12 @@ st.set_page_config(
 st.title("🌐 URL Content Fetcher")
 st.markdown("Paste any URL below and fetch its content instantly!")
 
-# URL input with example URLs
+# URL input
 url = st.text_input(
     "Enter URL:",
     placeholder="https://example.com",
     help="Enter a valid URL starting with http:// or https://"
 )
-
-# Add quick test buttons
-st.markdown("**Quick Test URLs:**")
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    if st.button("📝 Test JSONPlaceholder"):
-        st.session_state.test_url = "https://jsonplaceholder.typicode.com/posts/1"
-        
-with col2:
-    if st.button("🌐 Test Example.com"):
-        st.session_state.test_url = "https://example.com"
-        
-with col3:
-    if st.button("🔧 Test HTTPBin"):
-        st.session_state.test_url = "https://httpbin.org/get"
-        
-with col4:
-    if st.button("📰 Test News API"):
-        st.session_state.test_url = "https://api.github.com/users/octocat"
-
-# Use test URL if button was clicked
-if 'test_url' in st.session_state:
-    url = st.session_state.test_url
-    st.info(f"Using test URL: {url}")
-    del st.session_state.test_url
 
 # Options section
 st.sidebar.header("⚙️ Options")
@@ -81,123 +55,29 @@ def is_valid_url(url):
     except:
         return False
 
-# Function to fetch content with multiple fallback methods
+# Function to fetch content
 def fetch_content(url, timeout=10, headers=None):
-    # Method 1: Try direct request first
     try:
-        session = requests.Session()
-        
+        # Default headers
         default_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'close'  # Changed to close to avoid keep-alive issues
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
+        # Update with custom user agent if provided
         if user_agent:
             default_headers['User-Agent'] = user_agent
+            
+        # Add custom headers
         if headers:
             default_headers.update(headers)
         
-        response = session.get(
-            url, 
-            headers=default_headers, 
-            timeout=timeout,
-            allow_redirects=True,
-            verify=False,  # Disable SSL verification for problematic sites
-            stream=False
-        )
+        # Make request
+        response = requests.get(url, headers=default_headers, timeout=timeout)
         response.raise_for_status()
-        return response
         
-    except Exception as direct_error:
-        # Method 2: Try using a CORS proxy service
-        try:
-            proxy_url = f"https://api.allorigins.win/get?url={requests.utils.quote(url)}"
-            proxy_response = requests.get(proxy_url, timeout=timeout)
-            proxy_response.raise_for_status()
-            
-            proxy_data = proxy_response.json()
-            if proxy_data.get('status', {}).get('http_code') == 200:
-                # Create a mock response object
-                class MockResponse:
-                    def __init__(self, content, status_code=200, headers=None):
-                        self.content = content.encode('utf-8') if isinstance(content, str) else content
-                        self.text = content if isinstance(content, str) else content.decode('utf-8')
-                        self.status_code = status_code
-                        self.headers = headers or {'content-type': 'text/html'}
-                    
-                    def json(self):
-                        import json
-                        return json.loads(self.text)
-                    
-                    def raise_for_status(self):
-                        if self.status_code >= 400:
-                            raise requests.exceptions.HTTPError(f"{self.status_code} Error")
-                
-                return MockResponse(
-                    proxy_data.get('contents', ''),
-                    proxy_data.get('status', {}).get('http_code', 200),
-                    {'content-type': 'text/html'}
-                )
-            else:
-                raise Exception(f"Proxy returned status: {proxy_data.get('status', {})}")
-                
-        except Exception as proxy_error:
-            # Method 3: Try alternative CORS proxy
-            try:
-                alt_proxy_url = f"https://cors-anywhere.herokuapp.com/{url}"
-                alt_headers = default_headers.copy()
-                alt_headers['X-Requested-With'] = 'XMLHttpRequest'
-                
-                alt_response = requests.get(alt_proxy_url, headers=alt_headers, timeout=timeout)
-                alt_response.raise_for_status()
-                return alt_response
-                
-            except Exception as alt_proxy_error:
-                # Method 4: Try using requests-html (if available)
-                try:
-                    import urllib.request
-                    import urllib.error
-                    
-                    req = urllib.request.Request(
-                        url,
-                        headers={'User-Agent': default_headers['User-Agent']}
-                    )
-                    
-                    with urllib.request.urlopen(req, timeout=timeout) as urllib_response:
-                        content = urllib_response.read()
-                        
-                        class UrllibResponse:
-                            def __init__(self, content, code, headers):
-                                self.content = content
-                                self.text = content.decode('utf-8', errors='ignore')
-                                self.status_code = code
-                                self.headers = dict(headers)
-                            
-                            def json(self):
-                                import json
-                                return json.loads(self.text)
-                            
-                            def raise_for_status(self):
-                                if self.status_code >= 400:
-                                    raise requests.exceptions.HTTPError(f"{self.status_code} Error")
-                        
-                        return UrllibResponse(content, urllib_response.getcode(), urllib_response.headers)
-                        
-                except Exception as urllib_error:
-                    # Return all errors for debugging
-                    error_msg = f"""
-                    All methods failed:
-                    1. Direct request: {str(direct_error)}
-                    2. CORS proxy: {str(proxy_error)}
-                    3. Alternative proxy: {str(alt_proxy_error)}
-                    4. urllib fallback: {str(urllib_error)}
-                    
-                    This suggests network restrictions on your deployment platform.
-                    """
-                    return None, error_msg
+        return response
+    except requests.exceptions.RequestException as e:
+        return None, str(e)
 
 # Main logic
 if url:
@@ -318,38 +198,16 @@ st.markdown(
 )
 
 # Instructions in sidebar
+st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### 📝 Instructions:
 1. Enter a valid URL in the input field
-2. Try the quick test buttons first
-3. Adjust timeout and other options as needed
-4. Click "Fetch Content" to retrieve the content
+2. Adjust timeout and other options as needed
+3. Click "Fetch Content" to retrieve the content
+4. View the formatted content or download it
 
-### ⚠️ Deployment Notes:
-- **If getting connection errors on deployed apps:**
-  - This is common on cloud platforms (Streamlit Cloud, Heroku)
-  - The app tries multiple methods including CORS proxies
-  - Some URLs may be blocked by platform firewalls
-  - Try the test URLs first to verify functionality
-
-### 🔧 Troubleshooting:
-- **"Connection reset by peer"**: Platform network restrictions
-- **Timeout errors**: Increase timeout or try different URL
-- **403/404 errors**: Website blocks automated requests
-- **CORS errors**: Use the built-in proxy methods
-
-### 💡 Tips:
-- APIs and simple websites work best
-- Some sites block scraping attempts
-- Custom headers can help bypass restrictions
-""")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🚀 Alternative Solutions:")
-st.sidebar.markdown("""
-If still having issues:
-1. **Run locally**: `streamlit run app.py`
-2. **Use VPS/dedicated server** instead of managed platforms
-3. **Deploy on platforms** with fewer network restrictions
-4. **Use webhook/API approach** instead of direct scraping
+### ⚠️ Notes:
+- Some websites may block automated requests
+- Large files may take longer to load
+- Custom headers can help bypass some restrictions
 """)
