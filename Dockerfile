@@ -1,10 +1,11 @@
 FROM python:3.12-slim
 
-# Install Chrome and dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     unzip \
+    curl \
     xvfb \
     libgconf-2-4 \
     libxss1 \
@@ -32,24 +33,48 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chrome
-RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+# Install Google Chrome
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
-    && rm google-chrome-stable_current_amd64.deb \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
-WORKDIR /
+# Install ChromeDriver
+RUN CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+') \
+    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION%%.*}") \
+    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
+    && unzip /tmp/chromedriver.zip -d /tmp/ \
+    && mv /tmp/chromedriver /usr/local/bin/chromedriver \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm /tmp/chromedriver.zip
 
-# Copy the current directory contents into the container
-COPY . .
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
-# Install any needed packages specified in requirements.txt
+# Set the working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Make port 3306 available to the world outside this container
+# Copy the application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data
+
+# Make port 3306 available
 EXPOSE 3306
 
-# Run app.py when the container launches
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=3306"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3306/_stcore/health || exit 1
+
+# Run the application
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=3306", "--server.headless=true", "--server.fileWatcherType=none"]

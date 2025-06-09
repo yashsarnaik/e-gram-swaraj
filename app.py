@@ -6,10 +6,12 @@ import os
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import WebDriverException, TimeoutException
+from webdriver_manager.chrome import ChromeDriverManager
 import threading
 from io import StringIO
 import sys
@@ -28,8 +30,11 @@ def setup_logger():
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
+    # Ensure logs directory exists
+    os.makedirs('/app/logs', exist_ok=True)
+    
     # File handler
-    log_filename = f"selenium_scraper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_filename = f"/app/logs/selenium_scraper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     file_handler = logging.FileHandler(log_filename)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -44,25 +49,6 @@ def setup_logger():
     
     return logger, log_filename
 
-class StreamlitLogHandler(logging.Handler):
-    """Custom log handler to display logs in Streamlit"""
-    def __init__(self, log_container):
-        super().__init__()
-        self.log_container = log_container
-        self.logs = []
-    
-    def emit(self, record):
-        log_entry = self.format(record)
-        self.logs.append(log_entry)
-        # Update the container with latest logs
-        with self.log_container.container():
-            st.text_area(
-                "Live Logs",
-                value="\n".join(self.logs[-50:]),  # Show last 50 logs
-                height=300,
-                disabled=True
-            )
-
 class SeleniumJSONScraper:
     def __init__(self, logger):
         self.logger = logger
@@ -75,23 +61,48 @@ class SeleniumJSONScraper:
         try:
             chrome_options = Options()
             
-            if headless:
-                chrome_options.add_argument("--headless")
-                self.logger.info("Headless mode enabled")
-            
+            # Essential Chrome options for container environment
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-default-apps")
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
+            if headless:
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--disable-gpu")
+                self.logger.info("Headless mode enabled")
+            
+            # Try to use system chromedriver first, then fallback to webdriver-manager
+            chromedriver_path = "/usr/local/bin/chromedriver"
+            
+            if os.path.exists(chromedriver_path):
+                self.logger.info(f"Using system ChromeDriver: {chromedriver_path}")
+                service = Service(chromedriver_path)
+            else:
+                self.logger.info("System ChromeDriver not found, using webdriver-manager...")
+                service = Service(ChromeDriverManager().install())
+            
             self.logger.debug(f"Chrome options configured: {chrome_options.arguments}")
             
-            self.driver = webdriver.Chrome(options=chrome_options)
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
             self.driver.set_page_load_timeout(timeout)
             self.driver.implicitly_wait(10)
+            
+            # Execute script to remove webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             self.logger.info("✓ Chrome driver initialized successfully")
             return True
@@ -227,14 +238,18 @@ class SeleniumJSONScraper:
     def save_to_file(self, content, filename):
         """Save content to file"""
         try:
-            self.logger.info(f"Saving content to file: {filename}")
+            # Ensure data directory exists
+            os.makedirs('/app/data', exist_ok=True)
+            filepath = f"/app/data/{filename}"
             
-            with open(filename, 'w', encoding='utf-8') as f:
+            self.logger.info(f"Saving content to file: {filepath}")
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            file_size = os.path.getsize(filename)
+            file_size = os.path.getsize(filepath)
             self.logger.info(f"✓ File saved successfully ({file_size} bytes)")
-            return True, None
+            return True, filepath
             
         except Exception as e:
             error_msg = f"Failed to save file: {str(e)}"
@@ -280,11 +295,11 @@ def main():
             logger, log_filename = setup_logger()
             st.session_state.logger = logger
             st.session_state.log_filename = log_filename
-            st.success(f"Logger initialized: {log_filename}")
+            st.success(f"Logger initialized!")
+            st.info(f"Log file: {os.path.basename(log_filename)}")
         
         if st.session_state.logger:
             st.success("✅ Logger Ready")
-            st.info(f"Log file: {st.session_state.log_filename}")
         
         st.markdown("---")
         
@@ -310,7 +325,7 @@ def main():
         # Output filename
         output_filename = st.text_input(
             "📄 Output filename:",
-            value="scraped_data.txt",
+            value="scraped_data.json",
             help="Name of the file to save JSON data"
         )
         
@@ -335,23 +350,24 @@ def main():
                             
                             if content:
                                 # Save to file
-                                success, save_error = st.session_state.scraper.save_to_file(content, output_filename)
+                                success, filepath_or_error = st.session_state.scraper.save_to_file(content, output_filename)
                                 
                                 if success:
                                     st.success("✅ Scraping completed successfully!")
                                     
                                     # Show download button
-                                    with open(output_filename, 'r', encoding='utf-8') as f:
-                                        file_content = f.read()
-                                    
                                     st.download_button(
                                         label="📥 Download Scraped Data",
-                                        data=file_content,
+                                        data=content,
                                         file_name=output_filename,
-                                        mime="text/plain"
+                                        mime="application/json"
                                     )
+                                    
+                                    # Show preview
+                                    with st.expander("📋 Preview Data"):
+                                        st.code(content[:1000] + "..." if len(content) > 1000 else content)
                                 else:
-                                    st.error(f"Failed to save file: {save_error}")
+                                    st.error(f"Failed to save file: {filepath_or_error}")
                             else:
                                 st.error(f"Failed to fetch data: {error}")
                             
@@ -372,9 +388,6 @@ def main():
     
     with col2:
         st.header("📊 Live Logs")
-        
-        # Log display area
-        log_container = st.empty()
         
         if st.session_state.logger and st.session_state.log_filename:
             # Try to read and display current log file
@@ -418,7 +431,16 @@ def main():
     with st.expander("ℹ️ System Information"):
         st.write(f"**Python Version:** {sys.version}")
         st.write(f"**Current Working Directory:** {os.getcwd()}")
-        st.write(f"**Available Files:** {os.listdir('.')}")
+        st.write(f"**Chrome Binary:** {os.path.exists('/usr/bin/google-chrome')}")
+        st.write(f"**ChromeDriver:** {os.path.exists('/usr/local/bin/chromedriver')}")
+        
+        # Check Chrome version
+        try:
+            import subprocess
+            chrome_version = subprocess.check_output(['google-chrome', '--version']).decode().strip()
+            st.write(f"**Chrome Version:** {chrome_version}")
+        except:
+            st.write("**Chrome Version:** Not available")
 
 if __name__ == "__main__":
     main()
