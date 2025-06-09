@@ -2,8 +2,6 @@
 Configuration settings for the JSON fetcher with proxy support
 """
 
-import os
-
 class Config:
     # Proxy settings
     USE_PROXY_BY_DEFAULT = True
@@ -11,7 +9,7 @@ class Config:
     PROXY_PORT = 8888
     
     # Chrome settings
-    CHROME_HEADLESS = True
+    CHROME_HEADLESS = False
     CHROME_WINDOW_SIZE = "1920,1080"
     
     # Localhost headers to add
@@ -53,14 +51,9 @@ class Config:
             "--headless" if cls.CHROME_HEADLESS else "",
             "--no-sandbox",
             "--disable-dev-shm-usage",
-            "--disable-gpu",
             f"--window-size={cls.CHROME_WINDOW_SIZE}",
             "--disable-extensions",
-            "--disable-plugins",
-            "--disable-images",
-            "--disable-javascript",
             f"--user-agent={cls.LOCALHOST_USER_AGENT}",
-            "--disable-software-rasterizer",
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding"
