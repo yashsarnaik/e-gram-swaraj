@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 3306
 
 # Run app.py when the container launches
-CMD ["python", "app.py"]
+CMD ["python", "flask_app.py"]
