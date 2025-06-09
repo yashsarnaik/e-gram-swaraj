@@ -1,21 +1,22 @@
+# app.py
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import json
 import time
+import re
 
 def fetch_json_with_selenium(url, output_file="json_data.txt"):
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.chrome.service import Service
-    from webdriver_manager.chrome import ChromeDriverManager
-    import json, time, re
+    """
+    Opens a headless browser, fetches JSON data from URL, and saves to file.
+
+    Args:
+        url (str): The URL to fetch JSON data from
+        output_file (str): Name of the output file to save JSON data
+    """
 
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -71,32 +72,10 @@ def fetch_json_with_selenium(url, output_file="json_data.txt"):
     except Exception as e:
         print(f"✗ Error occurred: {e}")
         return False
+
     finally:
         try:
             driver.quit()
             print("✓ Browser closed")
         except:
             pass
-
-
-# Example usage
-if __name__ == "__main__":
-    # Replace with your desired URL
-    target_url = input("Enter the URL to fetch JSON from: ").strip()
-    
-    if not target_url:
-        target_url = "https://jsonplaceholder.typicode.com/posts/1"  # Default example URL
-        print(f"Using default URL: {target_url}")
-    
-    # Optional: specify output filename
-    output_filename = input("Enter output filename (press Enter for 'json_data.txt'): ").strip()
-    if not output_filename:
-        output_filename = "json_data.txt"
-    
-    # Fetch the JSON data
-    success = fetch_json_with_selenium(target_url, output_filename)
-    
-    if success:
-        print("\n✓ Task completed successfully!")
-    else:
-        print("\n✗ Task failed!")
