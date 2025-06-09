@@ -58,9 +58,18 @@ def is_valid_url(url):
 # Function to fetch content
 def fetch_content(url, timeout=10, headers=None):
     try:
-        # Default headers
+        # Create a session for connection pooling and better handling
+        session = requests.Session()
+        
+        # Default headers with more realistic browser simulation
         default_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
         
         # Update with custom user agent if provided
@@ -71,13 +80,46 @@ def fetch_content(url, timeout=10, headers=None):
         if headers:
             default_headers.update(headers)
         
-        # Make request
-        response = requests.get(url, headers=default_headers, timeout=timeout)
+        # Configure session with retry strategy
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Make request with additional parameters to handle connection issues
+        response = session.get(
+            url, 
+            headers=default_headers, 
+            timeout=timeout,
+            allow_redirects=True,
+            verify=True,  # SSL verification
+            stream=False  # Don't stream to avoid connection issues
+        )
         response.raise_for_status()
         
         return response
+        
+    except requests.exceptions.ConnectionError as e:
+        if "Connection reset by peer" in str(e):
+            return None, "Connection was reset by the target server. This might be due to: 1) Server blocking automated requests, 2) Network issues, 3) Server overload. Try again or use a different URL."
+        else:
+            return None, f"Connection error: {str(e)}"
+    except requests.exceptions.Timeout as e:
+        return None, f"Request timeout after {timeout} seconds. Try increasing the timeout or check if the server is responding."
+    except requests.exceptions.HTTPError as e:
+        return None, f"HTTP error {e.response.status_code}: {e.response.reason}"
     except requests.exceptions.RequestException as e:
-        return None, str(e)
+        return None, f"Request failed: {str(e)}"
+    except Exception as e:
+        return None, f"Unexpected error: {str(e)}"
 
 # Main logic
 if url:
