@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+WORKDIR /app
+
+
+COPY requirements.txt .
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     supervisor \
@@ -16,19 +21,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /root/.wdm/drivers/ && chmod -R 755 /root/.wdm/
+COPY . .    
 
-# Set the working directory
-WORKDIR /app
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
-COPY . .
+
+RUN mkdir -p /root/.wdm/drivers/ && chmod -R 755 /root/.wdm/
+
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data

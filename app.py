@@ -11,7 +11,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import WebDriverException, TimeoutException
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import threading
 from io import StringIO
@@ -82,28 +81,65 @@ class SeleniumJSONScraper:
                 chrome_options.add_argument("--headless")
                 self.logger.info("Headless mode enabled")
             
+            # Essential Chrome options
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-javascript")  # Remove if JS is needed
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.binary_location = '/usr/bin/google-chrome'
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # Try to set binary location (adjust path as needed for your system)
+            possible_chrome_paths = [
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chromium-browser',
+                '/usr/bin/chromium',
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+            ]
+            
+            chrome_binary = None
+            for path in possible_chrome_paths:
+                if os.path.exists(path):
+                    chrome_binary = path
+                    break
+            
+            if chrome_binary:
+                chrome_options.binary_location = chrome_binary
+                self.logger.info(f"Chrome binary found at: {chrome_binary}")
+            else:
+                self.logger.warning("Chrome binary path not found, using system default")
             
             self.logger.debug(f"Chrome options configured: {chrome_options.arguments}")
             
-            self.driver = webdriver.Chrome(options=chrome_options)
+            # Setup Chrome service
+            try:
+                service = Service(ChromeDriverManager().install())
+                self.logger.info("ChromeDriver installed via ChromeDriverManager")
+            except Exception as e:
+                self.logger.warning(f"ChromeDriverManager failed: {e}, trying system chromedriver")
+                service = Service()  # Use system chromedriver
+            
+            # Initialize driver
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
             self.driver.set_page_load_timeout(timeout)
             self.driver.implicitly_wait(10)
+            
+            # Execute script to hide webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             self.logger.info("✓ Chrome driver initialized successfully")
             return True
             
         except Exception as e:
             self.logger.error(f"✗ Failed to setup Chrome driver: {str(e)}")
+            self.logger.error(f"Error details: {type(e).__name__}: {str(e)}")
             return False
     
     def fetch_json_data(self, url, wait_time=2):
@@ -164,8 +200,9 @@ class SeleniumJSONScraper:
             self.logger.debug("Attempting to extract JSON from <pre> tag...")
             pre_element = self.driver.find_element(By.TAG_NAME, "pre")
             json_text = pre_element.text
-            self.logger.info("✓ JSON extracted from <pre> tag")
-            return json_text
+            if json_text and json_text.strip():
+                self.logger.info("✓ JSON extracted from <pre> tag")
+                return json_text
         except Exception as e:
             self.logger.debug(f"<pre> tag method failed: {str(e)}")
         
@@ -180,25 +217,62 @@ class SeleniumJSONScraper:
         except Exception as e:
             self.logger.debug(f"<body> tag method failed: {str(e)}")
         
-        # Method 3: Use page source
+        # Method 3: Try specific JSON containers
+        try:
+            self.logger.debug("Attempting to find JSON in common containers...")
+            json_selectors = [
+                'script[type="application/json"]',
+                'script[type="application/ld+json"]',
+                '.json-data',
+                '#json-data',
+                '[data-json]'
+            ]
+            
+            for selector in json_selectors:
+                try:
+                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    json_text = element.text or element.get_attribute('innerHTML')
+                    if json_text and json_text.strip():
+                        self.logger.info(f"✓ JSON found in {selector}")
+                        return json_text
+                except:
+                    continue
+                    
+        except Exception as e:
+            self.logger.debug(f"JSON container method failed: {str(e)}")
+        
+        # Method 4: Use page source as fallback
         try:
             self.logger.debug("Attempting to extract JSON from page source...")
             page_source = self.driver.page_source
             
             # Try to find JSON in page source
             import re
-            json_match = re.search(r'<pre[^>]*>(.*?)</pre>', page_source, re.DOTALL)
-            if json_match:
-                json_text = json_match.group(1)
-                self.logger.info("✓ JSON extracted from page source <pre> tags")
-                return json_text
             
-            # Look for JSON-like patterns
-            json_match = re.search(r'(\{.*\}|\[.*\])', page_source, re.DOTALL)
+            # Look for JSON in <pre> tags
+            json_match = re.search(r'<pre[^>]*>(.*?)</pre>', page_source, re.DOTALL | re.IGNORECASE)
             if json_match:
-                json_text = json_match.group(1)
-                self.logger.info("✓ JSON pattern found in page source")
-                return json_text
+                json_text = json_match.group(1).strip()
+                if json_text:
+                    self.logger.info("✓ JSON extracted from page source <pre> tags")
+                    return json_text
+            
+            # Look for JSON-like patterns in the entire page
+            json_patterns = [
+                r'(\{[^<>]*\})',  # Simple object
+                r'(\[[^<>]*\])',  # Simple array
+                r'(\{.*?\})',     # More complex object
+                r'(\[.*?\])'      # More complex array
+            ]
+            
+            for pattern in json_patterns:
+                json_match = re.search(pattern, page_source, re.DOTALL)
+                if json_match:
+                    potential_json = json_match.group(1).strip()
+                    # Basic validation
+                    if len(potential_json) > 10 and (potential_json.startswith('{') or potential_json.startswith('[')):
+                        self.logger.info("✓ JSON pattern found in page source")
+                        return potential_json
                 
         except Exception as e:
             self.logger.debug(f"Page source method failed: {str(e)}")
@@ -210,6 +284,9 @@ class SeleniumJSONScraper:
         """Process and validate JSON content"""
         try:
             self.logger.debug(f"Processing JSON content ({len(json_text)} characters)...")
+            
+            # Clean up the JSON text
+            json_text = json_text.strip()
             
             # Try to parse as JSON
             json_data = json.loads(json_text)
@@ -229,6 +306,9 @@ class SeleniumJSONScraper:
             self.logger.warning(f"Invalid JSON format: {str(e)}")
             self.logger.info("Saving content as raw text")
             return json_text, f"Invalid JSON format: {str(e)}"
+        except Exception as e:
+            self.logger.error(f"Error processing JSON: {str(e)}")
+            return json_text, f"Error processing content: {str(e)}"
     
     def save_to_file(self, content, filename):
         """Save content to file"""
@@ -299,6 +379,11 @@ def main():
         headless_mode = st.checkbox("Headless Mode", value=True)
         page_timeout = st.slider("Page Load Timeout (seconds)", 10, 60, 30)
         wait_time = st.slider("Wait Time After Load (seconds)", 1, 10, 2)
+        
+        # Advanced settings
+        with st.expander("Advanced Settings"):
+            disable_js = st.checkbox("Disable JavaScript", value=False, help="Disable JS for faster loading")
+            disable_images = st.checkbox("Disable Images", value=True, help="Disable images for faster loading")
     
     # Main interface
     col1, col2 = st.columns([1, 1])
@@ -356,6 +441,10 @@ def main():
                                         file_name=output_filename,
                                         mime="text/plain"
                                     )
+                                    
+                                    # Show preview
+                                    with st.expander("📄 Data Preview"):
+                                        st.text_area("Content Preview", value=file_content[:1000] + "..." if len(file_content) > 1000 else file_content, height=200)
                                 else:
                                     st.error(f"Failed to save file: {save_error}")
                             else:
@@ -380,8 +469,6 @@ def main():
         st.header("📊 Live Logs")
         
         # Log display area
-        log_container = st.empty()
-        
         if st.session_state.logger and st.session_state.log_filename:
             # Try to read and display current log file
             try:
@@ -417,6 +504,11 @@ def main():
         4. Click 'Start Scraping' to begin
         5. Monitor progress in the live logs
         6. Download the scraped data when complete
+        
+        **🔧 Common Issues:**
+        - If Chrome driver fails, ensure Google Chrome is installed
+        - For timeout issues, increase the page load timeout
+        - For JavaScript-heavy sites, disable "Disable JavaScript" option
         """
     )
     
@@ -424,7 +516,10 @@ def main():
     with st.expander("ℹ️ System Information"):
         st.write(f"**Python Version:** {sys.version}")
         st.write(f"**Current Working Directory:** {os.getcwd()}")
-        st.write(f"**Available Files:** {os.listdir('.')}")
+        try:
+            st.write(f"**Available Files:** {os.listdir('.')}")
+        except:
+            st.write("**Available Files:** Unable to list directory")
 
 if __name__ == "__main__":
     main()
