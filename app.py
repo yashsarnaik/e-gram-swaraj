@@ -3,6 +3,7 @@ import logging
 import json
 import time
 import os
+import shutil
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -70,76 +71,188 @@ class SeleniumJSONScraper:
         self.logger = logger
         self.driver = None
     
+    def find_chrome_binary(self):
+        """Find Chrome binary location"""
+        possible_paths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium',
+            '/opt/google/chrome/chrome',
+            '/usr/local/bin/google-chrome',
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+        ]
+        
+        # Check environment variable first
+        env_chrome = os.environ.get('CHROME_BIN')
+        if env_chrome and os.path.exists(env_chrome):
+            self.logger.info(f"Using Chrome from environment variable: {env_chrome}")
+            return env_chrome
+        
+        # Check common paths
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.logger.info(f"Found Chrome binary at: {path}")
+                return path
+        
+        # Try using which command
+        chrome_path = shutil.which('google-chrome') or shutil.which('google-chrome-stable') or shutil.which('chromium')
+        if chrome_path:
+            self.logger.info(f"Found Chrome using which: {chrome_path}")
+            return chrome_path
+        
+        self.logger.warning("Chrome binary not found in standard locations")
+        return None
+    
+    def find_chromedriver(self):
+        """Find ChromeDriver location"""
+        # Check environment variable first
+        env_driver = os.environ.get('CHROMEDRIVER_PATH')
+        if env_driver and os.path.exists(env_driver):
+            self.logger.info(f"Using ChromeDriver from environment: {env_driver}")
+            return env_driver
+        
+        # Check common paths
+        possible_paths = [
+            '/usr/local/bin/chromedriver',
+            '/usr/bin/chromedriver',
+            '/opt/chromedriver/chromedriver',
+            'C:\\chromedriver\\chromedriver.exe'
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.logger.info(f"Found ChromeDriver at: {path}")
+                return path
+        
+        # Try using which command
+        driver_path = shutil.which('chromedriver')
+        if driver_path:
+            self.logger.info(f"Found ChromeDriver using which: {driver_path}")
+            return driver_path
+        
+        return None
+    
     def setup_driver(self, headless=True, timeout=30):
         """Setup Chrome driver with options"""
         self.logger.info("Setting up Chrome driver...")
         
         try:
+            # Find Chrome binary
+            chrome_binary = self.find_chrome_binary()
+            
             chrome_options = Options()
             
             if headless:
-                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--headless=new")  # Use new headless mode
                 self.logger.info("Headless mode enabled")
             
-            # Essential Chrome options
+            # Essential Chrome options for containerized environments
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-software-rasterizer")
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_argument("--disable-extensions")
             chrome_options.add_argument("--disable-plugins")
             chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")  # Remove if JS is needed
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-ipc-flooding-protection")
+            chrome_options.add_argument("--disable-default-apps")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--no-first-run")
+            chrome_options.add_argument("--no-default-browser-check")
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--allow-running-insecure-content")
+            chrome_options.add_argument("--ignore-certificate-errors")
+            chrome_options.add_argument("--ignore-ssl-errors")
+            chrome_options.add_argument("--ignore-certificate-errors-spki-list")
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            
+            # Set Chrome binary location if found
+            if chrome_binary:
+                chrome_options.binary_location = chrome_binary
+            
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # Try to set binary location (adjust path as needed for your system)
-            possible_chrome_paths = [
-                '/usr/bin/google-chrome',
-                '/usr/bin/google-chrome-stable',
-                '/usr/bin/chromium-browser',
-                '/usr/bin/chromium',
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-            ]
+            # Add prefs to disable notifications and other popups
+            prefs = {
+                "profile.default_content_setting_values": {
+                    "notifications": 2,
+                    "popups": 2,
+                    "geolocation": 2,
+                    "media_stream": 2,
+                }
+            }
+            chrome_options.add_experimental_option("prefs", prefs)
             
-            chrome_binary = None
-            for path in possible_chrome_paths:
-                if os.path.exists(path):
-                    chrome_binary = path
-                    break
-            
-            if chrome_binary:
-                chrome_options.binary_location = chrome_binary
-                self.logger.info(f"Chrome binary found at: {chrome_binary}")
-            else:
-                self.logger.warning("Chrome binary path not found, using system default")
-            
-            self.logger.debug(f"Chrome options configured: {chrome_options.arguments}")
+            self.logger.debug(f"Chrome options configured with {len(chrome_options.arguments)} arguments")
             
             # Setup Chrome service
-            try:
-                service = Service(ChromeDriverManager().install())
-                self.logger.info("ChromeDriver installed via ChromeDriverManager")
-            except Exception as e:
-                self.logger.warning(f"ChromeDriverManager failed: {e}, trying system chromedriver")
-                service = Service()  # Use system chromedriver
+            service = None
+            chromedriver_path = self.find_chromedriver()
+            
+            if chromedriver_path:
+                self.logger.info(f"Using ChromeDriver at: {chromedriver_path}")
+                service = Service(chromedriver_path)
+            else:
+                try:
+                    self.logger.info("Attempting to install ChromeDriver via ChromeDriverManager...")
+                    service = Service(ChromeDriverManager().install())
+                    self.logger.info("ChromeDriver installed via ChromeDriverManager")
+                except Exception as e:
+                    self.logger.warning(f"ChromeDriverManager failed: {e}")
+                    # Try system chromedriver as fallback
+                    service = Service()
+                    self.logger.info("Using system ChromeDriver")
             
             # Initialize driver
+            self.logger.info("Initializing Chrome WebDriver...")
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             self.driver.set_page_load_timeout(timeout)
             self.driver.implicitly_wait(10)
             
             # Execute script to hide webdriver property
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            try:
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                self.driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+                self.driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+            except Exception as e:
+                self.logger.warning(f"Could not execute stealth scripts: {e}")
             
-            self.logger.info("✓ Chrome driver initialized successfully")
-            return True
+            # Test the driver
+            try:
+                self.driver.get("about:blank")
+                self.logger.info("✓ Chrome driver initialized and tested successfully")
+                return True
+            except Exception as e:
+                self.logger.error(f"Driver test failed: {e}")
+                return False
             
         except Exception as e:
             self.logger.error(f"✗ Failed to setup Chrome driver: {str(e)}")
             self.logger.error(f"Error details: {type(e).__name__}: {str(e)}")
+            
+            # Additional debugging info
+            try:
+                import subprocess
+                result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True, timeout=10)
+                self.logger.info(f"Chrome version check: {result.stdout.strip()}")
+            except Exception as version_e:
+                self.logger.error(f"Could not check Chrome version: {version_e}")
+            
+            try:
+                result = subprocess.run(['chromedriver', '--version'], capture_output=True, text=True, timeout=10)
+                self.logger.info(f"ChromeDriver version check: {result.stdout.strip()}")
+            except Exception as driver_e:
+                self.logger.error(f"Could not check ChromeDriver version: {driver_e}")
+            
             return False
     
     def fetch_json_data(self, url, wait_time=2):
@@ -374,6 +487,29 @@ def main():
         
         st.markdown("---")
         
+        # System info section
+        with st.expander("🔍 System Check"):
+            # Check Chrome
+            chrome_status = "❌ Not Found"
+            try:
+                import subprocess
+                result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    chrome_status = f"✅ {result.stdout.strip()}"
+            except:
+                pass
+            st.write(f"**Chrome:** {chrome_status}")
+            
+            # Check ChromeDriver
+            driver_status = "❌ Not Found"
+            try:
+                result = subprocess.run(['chromedriver', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    driver_status = f"✅ {result.stdout.strip()}"
+            except:
+                pass
+            st.write(f"**ChromeDriver:** {driver_status}")
+        
         # Browser settings
         st.subheader("🌐 Browser Settings")
         headless_mode = st.checkbox("Headless Mode", value=True)
@@ -498,17 +634,19 @@ def main():
     st.markdown(
         """
         **📌 Instructions:**
-        1. Initialize the logger first
-        2. Enter a URL that returns JSON data
-        3. Configure browser settings in the sidebar
-        4. Click 'Start Scraping' to begin
-        5. Monitor progress in the live logs
-        6. Download the scraped data when complete
+        1. Check system status in the sidebar to ensure Chrome is installed
+        2. Initialize the logger first
+        3. Enter a URL that returns JSON data
+        4. Configure browser settings in the sidebar
+        5. Click 'Start Scraping' to begin
+        6. Monitor progress in the live logs
+        7. Download the scraped data when complete
         
         **🔧 Common Issues:**
         - If Chrome driver fails, ensure Google Chrome is installed
         - For timeout issues, increase the page load timeout
         - For JavaScript-heavy sites, disable "Disable JavaScript" option
+        - Check system status in sidebar for Chrome/ChromeDriver availability
         """
     )
     
@@ -516,6 +654,13 @@ def main():
     with st.expander("ℹ️ System Information"):
         st.write(f"**Python Version:** {sys.version}")
         st.write(f"**Current Working Directory:** {os.getcwd()}")
+        
+        # Environment variables
+        chrome_bin = os.environ.get('CHROME_BIN', 'Not set')
+        chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', 'Not set')
+        st.write(f"**CHROME_BIN:** {chrome_bin}")
+        st.write(f"**CHROMEDRIVER_PATH:** {chromedriver_path}")
+        
         try:
             st.write(f"**Available Files:** {os.listdir('.')}")
         except:
