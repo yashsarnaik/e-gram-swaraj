@@ -10,99 +10,74 @@ import json
 import time
 
 def fetch_json_with_selenium(url, output_file="json_data.txt"):
-    """
-    Opens a headless browser, fetches JSON data from URL, and saves to file
-    
-    Args:
-        url (str): The URL to fetch JSON data from
-        output_file (str): Name of the output file to save JSON data
-    """
-    
-    # Set up Chrome options for headless browsing
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    import json, time, re
+
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
+
     try:
-        # Initialize the Chrome driver
         print("Starting headless browser...")
-        driver = webdriver.Chrome(options=chrome_options)
-        
-        # Set page load timeout
+        service = Service(ChromeDriverManager().install())
+        print(f"Using ChromeDriver from: {service.path}")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+
         driver.set_page_load_timeout(30)
-        
-        # Navigate to the URL
         print(f"Navigating to: {url}")
         driver.get(url)
-        
-        # Wait a moment for the page to load completely
         time.sleep(2)
-        
-        # Get the page source (which should contain JSON data)
-        page_content = driver.page_source
-        
-        # Try to extract JSON from the page
-        # Method 1: Try to get text from <pre> tag (common for JSON APIs)
+
         try:
             pre_element = driver.find_element(By.TAG_NAME, "pre")
             json_text = pre_element.text
         except:
-            # Method 2: Try to get text from <body> tag
             try:
                 body_element = driver.find_element(By.TAG_NAME, "body")
                 json_text = body_element.text
             except:
-                # Method 3: Use page source directly
-                json_text = page_content
-        
-        # Clean up the JSON text (remove HTML tags if any)
+                json_text = driver.page_source
+
         if json_text.startswith('<!DOCTYPE html>') or json_text.startswith('<html'):
-            # If we got HTML, try to extract JSON from it
-            import re
             json_match = re.search(r'<pre[^>]*>(.*?)</pre>', json_text, re.DOTALL)
             if json_match:
                 json_text = json_match.group(1)
             else:
-                # Try to find JSON-like content
                 json_match = re.search(r'(\{.*\}|\[.*\])', json_text, re.DOTALL)
                 if json_match:
                     json_text = json_match.group(1)
-        
-        # Validate if it's valid JSON
+
         try:
             json_data = json.loads(json_text)
-            # Pretty print the JSON
             formatted_json = json.dumps(json_data, indent=2, ensure_ascii=False)
             print("✓ Valid JSON data retrieved")
         except json.JSONDecodeError:
-            # If not valid JSON, save as is
             formatted_json = json_text
             print("⚠ Content retrieved (may not be valid JSON)")
-        
-        # Save to file
+
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(formatted_json)
-        
+
         print(f"✓ Data saved to: {output_file}")
-        print(f"✓ Data size: {len(formatted_json)} characters")
-        
         return True
-        
+
     except Exception as e:
-        print(f"✗ Error occurred: {str(e)}")
+        print(f"✗ Error occurred: {e}")
         return False
-        
     finally:
-        # Close the browser
-        if driver:
-            print("Closing browser...")
+        try:
             driver.quit()
             print("✓ Browser closed")
+        except:
+            pass
+
 
 # Example usage
 if __name__ == "__main__":
