@@ -1,4 +1,4 @@
-# app.py - Improved version with better error handling
+# app.py - Improved version with better error handling and proxy support
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -13,40 +13,51 @@ import time
 import re
 import logging
 import os
+import threading
+from proxy_server import start_proxy_server
+from config import Config
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=getattr(logging, Config.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
-def fetch_json_with_selenium(url, output_file="json_data.txt"):
+def fetch_json_with_selenium(url, output_file="json_data.txt", use_proxy=True, proxy_host="127.0.0.1", proxy_port=8888):
     """
     Opens a headless browser, fetches JSON data from URL, and saves to file.
+    Optionally uses a proxy to make requests appear as localhost.
 
     Args:
         url (str): The URL to fetch JSON data from
         output_file (str): Name of the output file to save JSON data
+        use_proxy (bool): Whether to use the localhost proxy (default: True)
+        proxy_host (str): Proxy server host (default: "127.0.0.1")
+        proxy_port (int): Proxy server port (default: 8888)
     """
     driver = None
-    
+    proxy_server = None
+
     try:
+        # Start proxy server if requested
+        if use_proxy:
+            logger.info(f"Starting localhost proxy server on {proxy_host}:{proxy_port}")
+            proxy_server = start_proxy_server(proxy_host, proxy_port)
+            logger.info("Proxy server started successfully")
+
         logger.info("Configuring Chrome options...")
         chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-plugins")
-        chrome_options.add_argument("--disable-images")
-        chrome_options.add_argument("--disable-javascript")  # Remove if JS is needed
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
-        
-        # Additional Docker-specific options
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-background-timer-throttling")
-        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-        chrome_options.add_argument("--disable-renderer-backgrounding")
+
+        # Add base Chrome options from config
+        for arg in Config.get_chrome_options_args():
+            chrome_options.add_argument(arg)
+
+        # Configure proxy if enabled
+        if use_proxy:
+            chrome_options.add_argument(f"--proxy-server=http://{proxy_host}:{proxy_port}")
+            logger.info(f"Chrome configured to use proxy: http://{proxy_host}:{proxy_port}")
+
+        # Add localhost-specific headers from config
+        for header_arg in Config.get_localhost_header_args():
+            chrome_options.add_argument(header_arg)
         
         logger.info("Starting Chrome browser...")
         
@@ -173,14 +184,30 @@ def fetch_json_with_selenium(url, output_file="json_data.txt"):
                 logger.warning(f"Error closing browser: {e}")
 
 # Test function for debugging
-def test_fetch(url):
+def test_fetch(url, use_proxy=True):
     """Test function to debug locally"""
-    logger.info(f"Testing fetch for URL: {url}")
-    result = fetch_json_with_selenium(url)
+    logger.info(f"Testing fetch for URL: {url} (proxy: {use_proxy})")
+    result = fetch_json_with_selenium(url, use_proxy=use_proxy)
     logger.info(f"Test result: {result}")
+    return result
+
+def test_fetch_without_proxy(url):
+    """Test function without proxy for comparison"""
+    logger.info(f"Testing fetch WITHOUT proxy for URL: {url}")
+    result = fetch_json_with_selenium(url, use_proxy=False)
+    logger.info(f"Test result (no proxy): {result}")
     return result
 
 if __name__ == "__main__":
     # Test with a sample JSON URL
     test_url = "https://jsonplaceholder.typicode.com/posts/1"
-    test_fetch(test_url)
+
+    logger.info("=" * 50)
+    logger.info("Testing WITH localhost proxy")
+    logger.info("=" * 50)
+    test_fetch(test_url, use_proxy=True)
+
+    logger.info("=" * 50)
+    logger.info("Testing WITHOUT proxy (for comparison)")
+    logger.info("=" * 50)
+    test_fetch_without_proxy(test_url)

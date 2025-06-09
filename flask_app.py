@@ -16,27 +16,36 @@ app = Flask(__name__)
 def fetch():
     try:
         url = request.args.get("url")
-        logger.info(f"Received request for URL: {url}")
-        
+        use_proxy = request.args.get("use_proxy", "true").lower() == "true"
+        proxy_host = request.args.get("proxy_host", "127.0.0.1")
+        proxy_port = int(request.args.get("proxy_port", "8888"))
+
+        logger.info(f"Received request for URL: {url} (proxy: {use_proxy})")
+
         if not url:
             logger.error("No URL provided in request")
             return jsonify({"error": "URL parameter is required"}), 400
-        
+
         # Validate URL format
         if not url.startswith(('http://', 'https://')):
             logger.error(f"Invalid URL format: {url}")
             return jsonify({"error": "URL must start with http:// or https://"}), 400
-        
+
         logger.info(f"Attempting to fetch JSON from: {url}")
-        success = fetch_json_with_selenium(url)
-        
+        success = fetch_json_with_selenium(url, use_proxy=use_proxy, proxy_host=proxy_host, proxy_port=proxy_port)
+
         if success:
             logger.info("Successfully fetched and saved JSON data")
-            return jsonify({"status": "success", "message": "JSON data fetched and saved"})
+            return jsonify({
+                "status": "success",
+                "message": "JSON data fetched and saved",
+                "proxy_used": use_proxy,
+                "proxy_config": f"{proxy_host}:{proxy_port}" if use_proxy else None
+            })
         else:
             logger.error("Failed to fetch JSON data")
             return jsonify({"status": "failed", "message": "Failed to fetch JSON data"}), 500
-            
+
     except Exception as e:
         logger.error(f"Unexpected error in fetch endpoint: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -46,6 +55,34 @@ def fetch():
 def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy", "service": "JSON Fetcher"})
+
+@app.route("/test-proxy", methods=["GET"])
+def test_proxy():
+    """Test endpoint to compare proxy vs non-proxy requests"""
+    try:
+        test_url = request.args.get("url", "https://jsonplaceholder.typicode.com/posts/1")
+
+        logger.info(f"Testing proxy functionality with URL: {test_url}")
+
+        # Test with proxy
+        logger.info("Testing WITH proxy...")
+        proxy_success = fetch_json_with_selenium(test_url, "proxy_test.json", use_proxy=True)
+
+        # Test without proxy
+        logger.info("Testing WITHOUT proxy...")
+        no_proxy_success = fetch_json_with_selenium(test_url, "no_proxy_test.json", use_proxy=False)
+
+        return jsonify({
+            "status": "test_completed",
+            "test_url": test_url,
+            "proxy_result": "success" if proxy_success else "failed",
+            "no_proxy_result": "success" if no_proxy_success else "failed",
+            "message": "Check logs for detailed comparison"
+        })
+
+    except Exception as e:
+        logger.error(f"Error in test-proxy endpoint: {str(e)}")
+        return jsonify({"error": f"Test failed: {str(e)}"}), 500
 
 @app.errorhandler(404)
 def not_found(error):
