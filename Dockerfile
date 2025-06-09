@@ -24,6 +24,8 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key adv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN mkdir -p /root/.wdm/drivers/ && chmod -R 755 /root/.wdm/
+
 # Copy application code
 COPY . /app
 WORKDIR /app
