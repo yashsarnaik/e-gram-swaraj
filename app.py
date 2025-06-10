@@ -8,6 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
+import undetected_chromedriver as uc
 import json
 import time
 import re
@@ -44,33 +45,67 @@ def fetch_json_with_selenium(url, output_file="json_data.txt", use_proxy=True, p
             logger.info("Proxy server started successfully")
 
         logger.info("Configuring Chrome options...")
-        chrome_options = Options()
 
-        # Add base Chrome options from config
-        for arg in Config.get_chrome_options_args():
-            chrome_options.add_argument(arg)
+        # Check if we should use undetected chromedriver
+        if Config.USE_UNDETECTED_CHROME:
+            logger.info("Using Undetected ChromeDriver...")
 
-        # Configure proxy if enabled
-        if use_proxy:
-            chrome_options.add_argument(f"--proxy-server=http://{proxy_host}:{proxy_port}")
-            logger.info(f"Chrome configured to use proxy: http://{proxy_host}:{proxy_port}")
+            # Configure undetected chrome options
+            chrome_options = uc.ChromeOptions()
 
-        # Add localhost-specific headers from config
-        for header_arg in Config.get_localhost_header_args():
-            chrome_options.add_argument(header_arg)
-        
-        logger.info("Starting Chrome browser...")
-        
-        try:
-            # Try to use ChromeDriverManager first
-            service = Service(ChromeDriverManager().install())
-            logger.info(f"Using ChromeDriver from: {service.path}")
-        except Exception as e:
-            logger.warning(f"ChromeDriverManager failed: {e}, trying system chromedriver")
-            # Fallback to system chromedriver
-            service = Service()
-        
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Add base Chrome options from config (excluding headless for undetected)
+            for arg in Config.get_chrome_options_args():
+                if arg != "--headless":  # Undetected chrome handles headless differently
+                    chrome_options.add_argument(arg)
+
+            # Configure proxy if enabled
+            if use_proxy:
+                chrome_options.add_argument(f"--proxy-server=http://{proxy_host}:{proxy_port}")
+                logger.info(f"Chrome configured to use proxy: http://{proxy_host}:{proxy_port}")
+
+            # Add localhost-specific headers from config
+            for header_arg in Config.get_localhost_header_args():
+                chrome_options.add_argument(header_arg)
+
+            logger.info("Starting Undetected Chrome browser...")
+
+            # Create undetected chrome driver
+            driver = uc.Chrome(
+                options=chrome_options,
+                version_main=Config.UNDETECTED_CHROME_VERSION,
+                driver_executable_path=Config.UNDETECTED_CHROME_DRIVER_EXECUTABLE_PATH,
+                headless=Config.CHROME_HEADLESS
+            )
+
+        else:
+            logger.info("Using regular ChromeDriver...")
+            chrome_options = Options()
+
+            # Add base Chrome options from config
+            for arg in Config.get_chrome_options_args():
+                chrome_options.add_argument(arg)
+
+            # Configure proxy if enabled
+            if use_proxy:
+                chrome_options.add_argument(f"--proxy-server=http://{proxy_host}:{proxy_port}")
+                logger.info(f"Chrome configured to use proxy: http://{proxy_host}:{proxy_port}")
+
+            # Add localhost-specific headers from config
+            for header_arg in Config.get_localhost_header_args():
+                chrome_options.add_argument(header_arg)
+
+            logger.info("Starting Chrome browser...")
+
+            try:
+                # Try to use ChromeDriverManager first
+                service = Service(ChromeDriverManager().install())
+                logger.info(f"Using ChromeDriver from: {service.path}")
+            except Exception as e:
+                logger.warning(f"ChromeDriverManager failed: {e}, trying system chromedriver")
+                # Fallback to system chromedriver
+                service = Service()
+
+            driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(30)
         
         logger.info(f"Navigating to: {url}")

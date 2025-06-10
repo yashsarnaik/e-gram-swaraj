@@ -11,6 +11,11 @@ class Config:
     # Chrome settings
     CHROME_HEADLESS = False
     CHROME_WINDOW_SIZE = "1920,1080"
+
+    # Undetected ChromeDriver settings
+    USE_UNDETECTED_CHROME = True
+    UNDETECTED_CHROME_VERSION = None  # Auto-detect version
+    UNDETECTED_CHROME_DRIVER_EXECUTABLE_PATH = None  # Auto-download
     
     # Localhost headers to add
     LOCALHOST_HEADERS = {
@@ -67,3 +72,13 @@ class Config:
         for key, value in cls.LOCALHOST_HEADERS.items():
             header_args.append(f"--add-header={key}:{value}")
         return header_args
+
+    @classmethod
+    def get_undetected_chrome_config(cls):
+        """Get undetected chrome configuration"""
+        return {
+            'use_undetected': cls.USE_UNDETECTED_CHROME,
+            'version': cls.UNDETECTED_CHROME_VERSION,
+            'driver_path': cls.UNDETECTED_CHROME_DRIVER_EXECUTABLE_PATH,
+            'headless': cls.CHROME_HEADLESS
+        }
