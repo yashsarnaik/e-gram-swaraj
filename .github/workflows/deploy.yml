@@ -1,0 +1,48 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug SSH key (optional)
+        run: |
+          if [ -n "${{ secrets.SERVER_SSH_KEY }}" ]; then
+            echo "SSH key is set"
+          else
+            echo "SSH key is NOT set"
+          fi
+        shell: bash
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          script: |
+            echo "Wait and watch!"
+            cd /root/projects/e-gram-swaraj
+
+            echo "updating the deployment"
+             
+            git pull origin main
+
+            echo "building docker image"
+            docker build -t egram .
+
+            echo "stopping & removing container"
+            docker stop egram-container || true && docker rm egram-container || true
+
+            echo "starting new container"
+            docker run -p 3306:3306 -d --name egram-container egram
+
+            echo "The application has been deployed successfully."
+            echo "."
