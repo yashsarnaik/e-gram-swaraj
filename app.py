@@ -1,34 +1,41 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import json
 import time
+import logging
 
-def fetch_json_with_selenium(url, output_file="json_data.txt"):
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def fetch_json_with_selenium(url, output_file="json_data.txt", headless=False):
     """
-    Opens a headless browser, fetches JSON data from URL, and saves to file
-    
+    Opens a browser, fetches JSON data from URL, and saves to file
+
     Args:
         url (str): The URL to fetch JSON data from
         output_file (str): Name of the output file to save JSON data
+        headless (bool): Whether to run in headless mode (default: False for headed mode)
     """
-    
-    # Set up Chrome options for headless browsing
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
+
+    # Set up Chrome options using undetected chromedriver
+    chrome_options = uc.ChromeOptions()
+
+    if headless:
+        chrome_options.add_argument("--headless")
+
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
+
     driver = None
-    
+
     try:
-        # Initialize the Chrome driver
-        print("Starting headless browser...")
-        driver = webdriver.Chrome(options=chrome_options)
+        # Initialize the undetected Chrome driver
+        mode_text = "headless" if headless else "headed"
+        print(f"Starting {mode_text} browser...")
+        driver = uc.Chrome(options=chrome_options, version_main=None)
         
         # Set page load timeout
         driver.set_page_load_timeout(30)
@@ -105,19 +112,23 @@ def fetch_json_with_selenium(url, output_file="json_data.txt"):
 if __name__ == "__main__":
     # Replace with your desired URL
     target_url = input("Enter the URL to fetch JSON from: ").strip()
-    
+
     if not target_url:
         target_url = "https://jsonplaceholder.typicode.com/posts/1"  # Default example URL
         print(f"Using default URL: {target_url}")
-    
+
     # Optional: specify output filename
     output_filename = input("Enter output filename (press Enter for 'json_data.txt'): ").strip()
     if not output_filename:
         output_filename = "json_data.txt"
-    
+
+    # Ask for browser mode preference
+    headless_choice = input("Run in headless mode? (y/N): ").strip().lower()
+    headless_mode = headless_choice in ['y', 'yes']
+
     # Fetch the JSON data
-    success = fetch_json_with_selenium(target_url, output_filename)
-    
+    success = fetch_json_with_selenium(target_url, output_filename, headless_mode)
+
     if success:
         print("\n✓ Task completed successfully!")
     else:
