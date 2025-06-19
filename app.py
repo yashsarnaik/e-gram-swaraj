@@ -1,7 +1,8 @@
+
 #!/usr/bin/env python3
 """
 Selenium-based hierarchical web scraper for egramswaraj.gov.in
-Modified to follow specific navigation path and then scrape hierarchically
+Modified to capture HTML data without clicking export buttons
 Navigation: Base URL → XPath1 → XPath2 → XPath3 → New Tab → Hierarchical Scraping
 """
 
@@ -23,6 +24,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(
@@ -61,22 +63,31 @@ class HierarchyNode:
     level: str  # 'state', 'district', 'block', 'village'
     parent_id: Optional[str] = None
     parent_name: Optional[str] = None
+    html_content: Optional[str] = None  # Store HTML content
 
 class EgramSwarajScraper:
-    """Main scraper class for egramswaraj.gov.in with specific navigation"""
+    """Main scraper class for egramswaraj.gov.in with HTML data capture"""
     
-    def __init__(self, headless=True, delay=2):
+    def __init__(self, headless=True, delay=2, target_state: Optional[str] = None):
         self.base_url = "https://egramswaraj.gov.in"
         self.delay = delay
+        self.target_state = target_state
         self.scraped_data = []
         self.hierarchy_data = []
         self.failed_urls = []
+        self.html_snapshots = []  # Store HTML snapshots
         
         # XPath selectors for navigation
         self.first_xpath = "/html/body/div[1]/div/div[3]/div/div/div/section[5]/div[2]/div/a[4]"
         self.second_xpath = "/html/body/form/section/div/div/div/div/div[1]/div[1]/div[1]/a"
         self.third_xpath = "/html/body/form/section/div/div/div/div/div[1]/div[1]/div[2]/div/div/div[1]/div[1]/a"
         self.fourth_xpath = "/html/body/form/section/div/div/div/div/div[1]/div[1]/div[2]/div/div/div[1]/div[2]/div/ul/li[1]/a"
+        
+        # Patterns to avoid clicking (export buttons, download links, etc.)
+        self.avoid_click_patterns = [
+            'export', 'excel', 'download', 'pdf', 'csv', 'xls', 'xlsx',
+            'Export to Excel', 'Download', 'Export', 'Print', 'Save'
+        ]
         
         # Initialize Chrome driver
         self.driver = self._setup_driver(headless)
@@ -129,6 +140,17 @@ class EgramSwarajScraper:
             logger.error(f"Failed to setup Chrome driver: {str(e)}")
             raise Exception("Could not initialize Chrome driver. Please ensure Chrome and ChromeDriver are installed.")
     
+    def should_avoid_clicking(self, element_text: str, element_href: str = "") -> bool:
+        """Check if element should be avoided for clicking (export buttons, etc.)"""
+        text_lower = element_text.lower()
+        href_lower = element_href.lower()
+        
+        for pattern in self.avoid_click_patterns:
+            if pattern.lower() in text_lower or pattern.lower() in href_lower:
+                logger.info(f"Avoiding click on element: {element_text} (matches pattern: {pattern})")
+                return True
+        return False
+    
     def safe_click_and_wait(self, xpath: str, description: str, timeout=15) -> bool:
         """Safely click element by XPath and wait for page load"""
         try:
@@ -137,6 +159,14 @@ class EgramSwarajScraper:
             
             # Wait for element to be clickable
             element = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+            
+            # Check if we should avoid clicking this element
+            element_text = element.text.strip()
+            element_href = element.get_attribute("href") or ""
+            
+            if self.should_avoid_clicking(element_text, element_href):
+                logger.warning(f"Skipping click on: {element_text} (export/download button)")
+                return False
             
             # Scroll element into view
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
@@ -159,6 +189,36 @@ class EgramSwarajScraper:
         except Exception as e:
             logger.error(f"Error clicking element {description}: {str(e)}")
             return False
+    
+    def capture_page_html(self, page_info: Dict) -> Dict:
+        """Capture and parse HTML content from current page"""
+        try:
+            # Get page source
+            html_content = self.driver.page_source
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Create HTML snapshot record
+            html_snapshot = {
+                'url': self.driver.current_url,
+                'page_title': self.driver.title,
+                'level': page_info.get('level', ''),
+                'parent_id': page_info.get('id', ''),
+                'parent_name': page_info.get('name', ''),
+                'html_content': html_content,
+                'text_content': soup.get_text(strip=True, separator=' '),
+                'captured_at': datetime.now().isoformat(),
+                'page_size': len(html_content)
+            }
+            
+            self.html_snapshots.append(html_snapshot)
+            
+            logger.info(f"Captured HTML content: {len(html_content)} characters from {self.driver.current_url}")
+            
+            return html_snapshot
+            
+        except Exception as e:
+            logger.error(f"Error capturing HTML content: {str(e)}")
+            return {}
     
     def handle_new_tab(self) -> bool:
         """Handle switching to new tab if opened"""
@@ -222,7 +282,7 @@ class EgramSwarajScraper:
             return False
     
     def extract_hierarchy_links(self, level_name: str, parent_info: Dict = None) -> List[Dict[str, str]]:
-        """Extract links for current hierarchy level"""
+        """Extract links for current hierarchy level, avoiding export buttons"""
         links = []
         try:
             logger.info(f"Extracting {level_name} level links")
@@ -236,7 +296,8 @@ class EgramSwarajScraper:
                 "a[href*='FileRedirect']",
                 "a[href*='report']",
                 "//table//a",
-                "//div//a[contains(@href, '.html')]"
+                "//div//a[contains(@href, '.html')]",
+                "//a[not(contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'export')) and not(contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'excel')) and not(contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'download'))]"
             ]
             
             found_links = []
@@ -256,6 +317,10 @@ class EgramSwarajScraper:
                         text = element.text.strip()
                         
                         if href and text and len(text) > 0:
+                            # Skip export/download buttons
+                            if self.should_avoid_clicking(text, href):
+                                continue
+                                
                             # Extract ID from various URL patterns
                             link_id = self._extract_id_from_url(href)
                             
@@ -285,7 +350,7 @@ class EgramSwarajScraper:
                     links.append(link)
                     seen_urls.add(link['url'])
             
-            logger.info(f"Found {len(links)} unique {level_name} links")
+            logger.info(f"Found {len(links)} unique {level_name} links (excluding export buttons)")
             
         except Exception as e:
             logger.error(f"Error extracting {level_name} links: {str(e)}")
@@ -314,10 +379,13 @@ class EgramSwarajScraper:
         return ""
     
     def scrape_current_page_data(self, level_info: Dict) -> List[Dict]:
-        """Scrape data from current page"""
+        """Scrape data from current page including HTML capture"""
         scraped_items = []
         
         try:
+            # First, capture HTML content
+            html_snapshot = self.capture_page_html(level_info)
+            
             # Look for tables with data
             tables = self.driver.find_elements(By.TAG_NAME, "table")
             
@@ -345,6 +413,7 @@ class EgramSwarajScraper:
                                     'parent_id': level_info.get('id', ''),
                                     'parent_name': level_info.get('name', ''),
                                     'url': self.driver.current_url,
+                                    'page_title': self.driver.title,
                                     'scraped_at': datetime.now().isoformat()
                                 }
                                 
@@ -432,10 +501,11 @@ class EgramSwarajScraper:
             
             # Navigate to current level URL if provided
             if current_level_info.get('url'):
+                logger.info(f"Navigating to: {current_level_info['url']}")
                 self.driver.get(current_level_info['url'])
                 time.sleep(self.delay)
             
-            # Scrape data from current page
+            # Scrape data from current page (includes HTML capture)
             page_data = self.scrape_current_page_data(current_level_info)
             self.scraped_data.extend(page_data)
             
@@ -446,15 +516,35 @@ class EgramSwarajScraper:
                 url=current_level_info.get('url', ''),
                 level=current_level_info.get('level', f'level_{current_depth}'),
                 parent_id=current_level_info.get('parent_id'),
-                parent_name=current_level_info.get('parent_name')
+                parent_name=current_level_info.get('parent_name'),
+                html_content=self.driver.page_source if current_depth < 3 else None  # Limit HTML storage
             ))
             
-            # Extract next level links
+            # Extract next level links (avoiding export buttons)
             next_level_name = self._get_next_level_name(current_level_info.get('level', ''), current_depth)
             child_links = self.extract_hierarchy_links(next_level_name, current_level_info)
+
+            # === MODIFICATION START: Filter for a specific state ===
+            # If a target state is specified and we are at the state selection level (depth 0)
+            if self.target_state and current_depth == 0:
+                filtered_links = [
+                    link for link in child_links
+                    if self.target_state.upper() in link.get('name', '').upper()
+                ]
+
+                if not filtered_links:
+                    logger.warning(f"Target state '{self.target_state}' not found in the list of states. Halting scrape.")
+                    child_links = []  # Empty the list to stop recursion
+                else:
+                    logger.info(f"Found target state: '{self.target_state}'. Focusing scrape on this state only.")
+                    child_links = filtered_links  # Proceed only with the target state
+            # === MODIFICATION END ===
+
+            logger.info(f"Found {len(child_links)} child links for next level to process.")
             
             # Recursively scrape child levels
-            for child_link in child_links:
+            for i, child_link in enumerate(child_links):
+                logger.info(f"Processing child {i+1}/{len(child_links)}: {child_link.get('name', 'Unknown')}")
                 self.scrape_hierarchically(child_link, max_depth, current_depth + 1)
                 
         except Exception as e:
@@ -472,7 +562,7 @@ class EgramSwarajScraper:
     
     def run_complete_scraping(self, start_url: str, max_depth: int = 6, max_items_per_level: int = None):
         """Run the complete scraping process"""
-        logger.info("Starting complete scraping process")
+        logger.info("Starting complete scraping process with HTML capture")
         
         try:
             # Step 1: Navigate to the scraping page
@@ -498,10 +588,10 @@ class EgramSwarajScraper:
         except Exception as e:
             logger.error(f"Error in complete scraping: {str(e)}")
         finally:
-            logger.info(f"Scraping completed. Total records: {len(self.scraped_data)}")
+            logger.info(f"Scraping completed. Total records: {len(self.scraped_data)}, HTML snapshots: {len(self.html_snapshots)}")
     
     def save_data(self, filename_prefix="egramswaraj_hierarchical"):
-        """Save scraped data to multiple formats with emphasis on CSV"""
+        """Save scraped data to multiple formats with emphasis on CSV and HTML capture"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         try:
@@ -515,13 +605,37 @@ class EgramSwarajScraper:
             else:
                 logger.warning("No scraped data available to save to CSV")
             
+            # Save HTML snapshots as separate CSV
+            if self.html_snapshots:
+                html_csv_filename = f"{filename_prefix}_html_snapshots_{timestamp}.csv"
+                html_df = pd.DataFrame(self.html_snapshots)
+                # Limit HTML content in CSV to first 10000 characters to avoid huge files
+                html_df['html_content_preview'] = html_df['html_content'].str[:10000]
+                html_df['text_content_preview'] = html_df['text_content'].str[:5000]
+                # Save without full HTML content for CSV
+                html_df_small = html_df.drop(['html_content'], axis=1)
+                html_df_small.to_csv(html_csv_filename, index=False, encoding='utf-8')
+                logger.info(f"✅ HTML snapshots saved to CSV: {html_csv_filename}")
+                print(f"✅ HTML SNAPSHOTS: {html_csv_filename}")
+            
             # Save hierarchy as separate CSV
             if self.hierarchy_data:
                 hierarchy_filename = f"{filename_prefix}_hierarchy_{timestamp}.csv"
                 hierarchy_df = pd.DataFrame([asdict(node) for node in self.hierarchy_data])
+                # Remove HTML content from hierarchy CSV to keep it clean
+                if 'html_content' in hierarchy_df.columns:
+                    hierarchy_df = hierarchy_df.drop(['html_content'], axis=1)
                 hierarchy_df.to_csv(hierarchy_filename, index=False, encoding='utf-8')
                 logger.info(f"✅ Hierarchy data saved to CSV: {hierarchy_filename}")
                 print(f"✅ HIERARCHY OUTPUT: {hierarchy_filename}")
+            
+            # Save complete HTML snapshots as JSON (with full HTML content)
+            if self.html_snapshots:
+                html_json_filename = f"{filename_prefix}_html_complete_{timestamp}.json"
+                with open(html_json_filename, 'w', encoding='utf-8') as f:
+                    json.dump(self.html_snapshots, f, indent=2, ensure_ascii=False)
+                logger.info(f"✅ Complete HTML data saved to JSON: {html_json_filename}")
+                print(f"✅ COMPLETE HTML JSON: {html_json_filename}")
             
             # Save as JSON (backup format)
             json_filename = f"{filename_prefix}_{timestamp}.json"
@@ -529,11 +643,16 @@ class EgramSwarajScraper:
                 json.dump({
                     'scraped_data': self.scraped_data,
                     'hierarchy_data': [asdict(node) for node in self.hierarchy_data],
+                    'html_snapshots_summary': [
+                        {k: v for k, v in snapshot.items() if k != 'html_content'} 
+                        for snapshot in self.html_snapshots
+                    ],
                     'failed_urls': self.failed_urls,
                     'scraping_metadata': {
                         'timestamp': timestamp,
                         'total_records': len(self.scraped_data),
                         'total_hierarchy_nodes': len(self.hierarchy_data),
+                        'total_html_snapshots': len(self.html_snapshots),
                         'failed_urls_count': len(self.failed_urls)
                     }
                 }, f, indent=2, ensure_ascii=False)
@@ -553,15 +672,18 @@ class EgramSwarajScraper:
             print(f"=" * 50)
             print(f"Total records scraped: {len(self.scraped_data)}")
             print(f"Total hierarchy nodes: {len(self.hierarchy_data)}")
+            print(f"Total HTML snapshots: {len(self.html_snapshots)}")
             print(f"Failed URLs: {len(self.failed_urls)}")
             print(f"Files saved with timestamp: {timestamp}")
             print(f"🎯 MAIN CSV OUTPUT: {csv_filename if self.scraped_data else 'No data to save'}")
+            print(f"🌐 HTML SNAPSHOTS: {html_csv_filename if self.html_snapshots else 'No HTML data'}")
             
         except Exception as e:
             logger.error(f"Error saving data: {str(e)}")
             print(f"❌ Error saving data: {str(e)}")
     
     def close(self):
+
         """Close the browser driver"""
         try:
             if self.driver:
@@ -574,15 +696,22 @@ def main():
     """Main execution function"""
     # Configuration
     START_URL = "https://egramswaraj.gov.in"
+    TARGET_STATE = "MAHARASHTRA"  # Set to a specific state name or None to scrape all states
     
     print("🚀 Starting EgramSwaraj Hierarchical Web Scraper")
+    if TARGET_STATE:
+        print(f"🎯 Target State: {TARGET_STATE}")
     print("📍 Navigation Path: Base URL → XPath1 → XPath2 → XPath3 → XPath4 → New Tab → Hierarchical Scraping")
     print("=" * 80)
     
     scraper = None
     try:
         print("📦 Initializing Chrome driver...")
-        scraper = EgramSwarajScraper(headless=False, delay=3)  # Set headless=True to hide browser
+        scraper = EgramSwarajScraper(
+            headless=False, 
+            delay=3, 
+            target_state=TARGET_STATE
+        )  # Set headless=True to hide browser
         print("✅ Chrome driver initialized successfully!")
         
         print("\n🔍 Starting navigation and hierarchical scraping...")
@@ -611,16 +740,17 @@ def main():
 # Installation and usage instructions
 INSTRUCTIONS = """
 📋 INSTALLATION REQUIREMENTS:
-pip install selenium webdriver-manager pandas
+pip install selenium webdriver-manager pandas beautifulsoup4
 
 🔧 SETUP INSTRUCTIONS:
 1. Install Google Chrome browser
 2. Install required Python packages:
-   pip install selenium webdriver-manager pandas
-3. Update START_URL in main() function if needed
-4. Run: python scraper.py
+   pip install selenium webdriver-manager pandas beautifulsoup4
+3. Modify TARGET_STATE in main() function to your desired state, or set to None for all states.
+4. Run: python app.py
 
 ⚙️ CONFIGURATION OPTIONS:
+- TARGET_STATE="MAHARASHTRA" (Target a specific state)
 - headless=True/False (show/hide browser)
 - delay=3 (seconds between requests)
 - max_depth=6 (maximum hierarchy depth)
@@ -639,7 +769,7 @@ pip install selenium webdriver-manager pandas
 4. Click element: /html/body/form/section/div/div/div/div/div[1]/div[1]/div[2]/div/div/div[1]/div[1]/a
 5. Click element: /html/body/form/section/div/div/div/div/div[1]/div[1]/div[2]/div/div/div[1]/div[2]/div/ul/li[1]/a
 6. Switch to new tab if opened
-7. Start hierarchical scraping from current page
+7. Start hierarchical scraping from current page (filtered for TARGET_STATE if specified)
 
 🔍 HIERARCHY LEVELS:
 - Level 0: Root/Initial page
