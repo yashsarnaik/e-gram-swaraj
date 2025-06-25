@@ -1,334 +1,242 @@
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
-import time
-import json
-import os
-from urllib.parse import urljoin, urlparse
-import logging
-from typing import Dict, List, Optional
+import csv
 import re
 
-class EGramSwarajScraper:
-    def __init__(self, delay=1, max_retries=3):
-        """
-        Initialize the scraper with rate limiting and retry logic
-        
-        Args:
-            delay: Delay between requests in seconds
-            max_retries: Maximum number of retries for failed requests
-        """
-        self.base_url = "https://egramswaraj.gov.in"
-        self.delay = delay
-        self.max_retries = max_retries
-        self.session = requests.Session()
-        
-        # Setup logging
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        self.logger = logging.getLogger(__name__)
-        
-        # Headers to mimic browser behavior
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
-        
-        # Data storage
-        self.scraped_data = {
-            'states': [],
-            'districts': [],
-            'blocks': [],
-            'villages': [],
-            'vouchers': [],
-            'voucher_details': []
-        }
+def clean_number(text):
+    """Clean and convert text to number, handling Indian number format"""
+    if not text or text.strip() == '':
+        return 0
+    # Remove commas and convert to float
+    cleaned = re.sub(r'[,\s]', '', str(text))
+    try:
+        return float(cleaned)
+    except:
+        return 0
 
-    def make_request(self, url: str) -> Optional[BeautifulSoup]:
-        """Make HTTP request with retry logic and rate limiting"""
-        for attempt in range(self.max_retries):
-            try:
-                time.sleep(self.delay)  # Rate limiting
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                
-                self.logger.info(f"Successfully fetched: {url}")
-                return BeautifulSoup(response.content, 'html.parser')
-                
-            except requests.exceptions.RequestException as e:
-                self.logger.warning(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
-                if attempt == self.max_retries - 1:
-                    self.logger.error(f"Failed to fetch {url} after {self.max_retries} attempts")
-                    return None
-                time.sleep(self.delay * (attempt + 1))  # Exponential backoff
+def scrape_egramswaraj_data():
+    url = "https://egramswaraj.gov.in/FileRedirect.jsp?FD=SchemeWiseExpenditureReport2025-2026/0//27&name=27.html"
+    
+    try:
+        # Fetch the HTML content
+        response = requests.get(url)
+        response.raise_for_status()
         
+        # Save HTML content to file for reference
+        with open("index.html", "w", encoding="utf-8") as f:
+            f.write(response.text)
+        
+        # Parse HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find the main data table
+        table = soup.find('table')
+        if not table:
+            print("No table found in the HTML")
+            return
+        
+        # Extract data
+        rows = table.find_all('tr')
+        
+        # Prepare CSV data
+        csv_data = []
+        
+        # Process header row
+        header_row = ['State']
+        
+        # Add headers for each category
+        categories = [
+            'Zilla_Panchayat_RV', 'Zilla_Panchayat_PV', 'Zilla_Panchayat_CV', 'Zilla_Panchayat_JV',
+            'Zilla_Panchayat_Receipts', 'Zilla_Panchayat_Payments',
+            'Block_Panchayat_RV', 'Block_Panchayat_PV', 'Block_Panchayat_CV', 'Block_Panchayat_JV',
+            'Block_Panchayat_Receipts', 'Block_Panchayat_Payments',
+            'Village_Panchayat_RV', 'Village_Panchayat_PV', 'Village_Panchayat_CV', 'Village_Panchayat_JV',
+            'Village_Panchayat_Receipts', 'Village_Panchayat_Payments'
+        ]
+        
+        header_row.extend(categories)
+        csv_data.append(header_row)
+        
+        # Process data rows
+        print("Processing table rows...")
+        
+        # List of Indian states to identify data rows
+        indian_states = [
+            'ANDHRA PRADESH', 'ASSAM', 'CHHATTISGARH', 'HARYANA', 'HIMACHAL PRADESH',
+            'KERALA', 'MAHARASHTRA', 'ODISHA', 'PUNJAB', 'RAJASTHAN', 'SIKKIM',
+            'TAMIL NADU', 'TELANGANA', 'TRIPURA', 'UTTARAKHAND', 'UTTAR PRADESH',
+            'WEST BENGAL'
+        ]
+        
+        for row_idx, row in enumerate(rows):
+            cells = row.find_all(['td', 'th'])
+            
+            if len(cells) < 2:
+                continue
+                
+            first_cell = cells[0].get_text(strip=True).upper()
+            
+            # Check if this is a state row or total row
+            if first_cell in indian_states or first_cell == 'TOTAL':
+                print(f"Processing row: {first_cell}")
+                
+                row_data = [first_cell.title() if first_cell != 'TOTAL' else 'TOTAL']
+                
+                # Extract all cell data
+                for i in range(1, len(cells)):
+                    cell_text = cells[i].get_text(strip=True)
+                    row_data.append(clean_number(cell_text))
+                
+                # Ensure we have the right number of columns (pad with zeros if needed)
+                while len(row_data) < len(header_row):
+                    row_data.append(0)
+                
+                # Truncate if too many columns
+                if len(row_data) > len(header_row):
+                    row_data = row_data[:len(header_row)]
+                
+                csv_data.append(row_data)
+                print(f"Added row for {first_cell}: {len(row_data)} columns")
+        
+        # Save to CSV
+        with open('egramswaraj_data.csv', 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerows(csv_data)
+        
+        print(f"Data successfully saved to egramswaraj_data.csv")
+        print(f"Total rows: {len(csv_data)}")
+        print("HTML content also saved to index.html")
+        
+        # Display first few rows for verification
+        print("\nFirst few rows of extracted data:")
+        for i, row in enumerate(csv_data[:5]):
+            print(f"Row {i}: {row[:3]}...")  # Show first 3 columns
+            
+    except requests.RequestException as e:
+        print(f"Error fetching data: {e}")
+    except Exception as e:
+        print(f"Error processing data: {e}")
+
+def create_alternative_csv_from_html():
+    """Alternative method - parse HTML directly and extract table data more systematically"""
+    try:
+        print("Trying alternative extraction method...")
+        
+        with open("index.html", "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        soup = BeautifulSoup(content, 'html.parser')
+        
+        # Find the main table with data
+        tables = soup.find_all('table')
+        
+        if not tables:
+            print("No tables found!")
+            return
+            
+        # Usually the main data table is the largest one
+        main_table = max(tables, key=lambda t: len(t.find_all('tr')))
+        
+        rows = main_table.find_all('tr')
+        print(f"Found {len(rows)} rows in main table")
+        
+        # Create CSV data
+        csv_data = []
+        
+        # Create headers based on table structure
+        headers = ['State', 
+                  'ZP_RV', 'ZP_PV', 'ZP_CV', 'ZP_JV', 'ZP_Receipts', 'ZP_Payments',
+                  'BP_RV', 'BP_PV', 'BP_CV', 'BP_JV', 'BP_Receipts', 'BP_Payments', 
+                  'VP_RV', 'VP_PV', 'VP_CV', 'VP_JV', 'VP_Receipts', 'VP_Payments']
+        
+        csv_data.append(headers)
+        
+        # Process each row
+        for i, row in enumerate(rows):
+            cells = row.find_all(['td', 'th'])
+            
+            if len(cells) < 2:
+                continue
+                
+            # Get all cell text
+            cell_texts = [cell.get_text(strip=True) for cell in cells]
+            
+            # Skip completely empty rows
+            if all(not text for text in cell_texts):
+                continue
+                
+            first_cell = cell_texts[0].upper()
+            
+            # Print row info for debugging
+            print(f"Row {i}: First cell = '{first_cell}', Total cells = {len(cells)}")
+            
+            # Check if this looks like a data row
+            if (first_cell and 
+                not first_cell.startswith('STATE') and 
+                not 'PANCHAYAT' in first_cell and
+                not first_cell in ['RV', 'PV', 'CV', 'JV'] and
+                len(cell_texts) > 5):  # Should have multiple data columns
+                
+                # Clean the row data
+                clean_row = [cell_texts[0].title()]  # State name
+                
+                # Process remaining cells as numbers
+                for j in range(1, len(cell_texts)):
+                    clean_row.append(clean_number(cell_texts[j]))
+                
+                # Pad or truncate to match header length
+                while len(clean_row) < len(headers):
+                    clean_row.append(0)
+                    
+                if len(clean_row) > len(headers):
+                    clean_row = clean_row[:len(headers)]
+                
+                csv_data.append(clean_row)
+                print(f"Added data row: {clean_row[0]} with {len(clean_row)} columns")
+        
+        # Save alternative CSV
+        with open('egramswaraj_data_alt.csv', 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerows(csv_data)
+        
+        print(f"\nAlternative extraction completed!")
+        print(f"Saved to: egramswaraj_data_alt.csv")
+        print(f"Total data rows: {len(csv_data) - 1}")  # Subtract header row
+        
+        return csv_data
+        
+    except Exception as e:
+        print(f"Error in alternative extraction: {e}")
         return None
 
-    def scrape_state_report(self) -> Dict:
-        """Scrape the main state report page"""
-        url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026&name=StateSummaryReport.html"
-        soup = self.make_request(url)
-        
-        if not soup:
-            return {}
-        
-        state_data = {
-            'url': url,
-            'title': soup.title.string if soup.title else '',
-            'content': str(soup)
-        }
-        
-        self.scraped_data['states'].append(state_data)
-        self.logger.info("State report scraped successfully")
-        return state_data
-
-    def scrape_districts(self, state_code: str = "27") -> List[Dict]:
-        """Scrape all districts for a given state"""
-        districts_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}&name={state_code}.html"
-        soup = self.make_request(districts_url)
-        
-        if not soup:
-            return []
-
-        # Extract district links/codes from the page
-        districts = []
-        
-        # Look for district codes in the range 424-456
-        for district_code in range(424, 457):  # 424 to 456 inclusive
-            district_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}/{district_code}&name={district_code}.html"
-            district_soup = self.make_request(district_url)
-            
-            if district_soup:
-                district_data = {
-                    'state_code': state_code,
-                    'district_code': district_code,
-                    'url': district_url,
-                    'title': district_soup.title.string if district_soup.title else '',
-                    'content': str(district_soup)
-                }
-                districts.append(district_data)
-                self.scraped_data['districts'].append(district_data)
-                
-                # Extract blocks for this district
-                self.scrape_blocks(state_code, str(district_code))
-        
-        self.logger.info(f"Scraped {len(districts)} districts")
-        return districts
-
-    def scrape_blocks(self, state_code: str, district_code: str) -> List[Dict]:
-        """Scrape all blocks for a given district"""
-        district_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}/{district_code}&name={district_code}.html"
-        soup = self.make_request(district_url)
-        
-        if not soup:
-            return []
-
-        blocks = []
-        # Extract block codes from the district page
-        # Look for 4-digit block codes in links
-        block_links = soup.find_all('a', href=True) if soup else []
-        block_codes = set()
-        
-        for link in block_links:
-            href = link.get('href', '')
-            # Extract 4-digit codes from href
-            matches = re.findall(r'/(\d{4})\.html', href)
-            block_codes.update(matches)
-        
-        # If no blocks found in links, try a range-based approach
-        if not block_codes:
-            # Try common block code ranges (this might need adjustment based on actual data)
-            for block_code in range(4700, 4800):  # Adjust range as needed
-                block_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}/{district_code}&name={block_code}.html"
-                block_soup = self.make_request(block_url)
-                
-                if block_soup and block_soup.title and "Error" not in block_soup.title.string:
-                    block_codes.add(str(block_code))
-
-        for block_code in block_codes:
-            block_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}/{district_code}&name={block_code}.html"
-            block_soup = self.make_request(block_url)
-            
-            if block_soup:
-                block_data = {
-                    'state_code': state_code,
-                    'district_code': district_code,
-                    'block_code': block_code,
-                    'url': block_url,
-                    'title': block_soup.title.string if block_soup.title else '',
-                    'content': str(block_soup)
-                }
-                blocks.append(block_data)
-                self.scraped_data['blocks'].append(block_data)
-                
-                # Extract villages for this block
-                self.scrape_villages(state_code, district_code, block_code)
-        
-        self.logger.info(f"Scraped {len(blocks)} blocks for district {district_code}")
-        return blocks
-
-    def scrape_villages(self, state_code: str, district_code: str, block_code: str) -> List[Dict]:
-        """Scrape all villages for a given block"""
-        block_url = f"{self.base_url}/FileRedirect.jsp?FD=SummaryReport2025-2026/{state_code}/{district_code}&name={block_code}.html"
-        soup = self.make_request(block_url)
-        
-        if not soup:
-            return []
-
-        villages = []
-        # Extract village codes from the block page
-        village_links = soup.find_all('a', href=True) if soup else []
-        village_codes = set()
-        
-        for link in village_links:
-            href = link.get('href', '')
-            # Extract village codes (typically 6-digit codes)
-            matches = re.findall(r'/(\d{6})\.html', href)
-            village_codes.update(matches)
-
-        for village_code in village_codes:
-            village_url = f"{self.base_url}/FileRedirect.jsp?FD=FinancialYear2025-2026/{state_code}&name={village_code}.html"
-            village_soup = self.make_request(village_url)
-            
-            if village_soup:
-                village_data = {
-                    'state_code': state_code,
-                    'district_code': district_code,
-                    'block_code': block_code,
-                    'village_code': village_code,
-                    'url': village_url,
-                    'title': village_soup.title.string if village_soup.title else '',
-                    'content': str(village_soup)
-                }
-                villages.append(village_data)
-                self.scraped_data['villages'].append(village_data)
-                
-                # Extract vouchers for this village
-                self.scrape_vouchers(state_code, district_code, block_code, village_code)
-        
-        self.logger.info(f"Scraped {len(villages)} villages for block {block_code}")
-        return villages
-
-    def scrape_vouchers(self, state_code: str, district_code: str, block_code: str, village_code: str) -> List[Dict]:
-        """Scrape voucher data for a given village"""
-        vouchers = []
-        
-        # Scrape monthly voucher data (months 1-12)
-        for month in range(1, 13):
-            voucher_url = f"{self.base_url}/voucherWiseReport.do?voucherWise=Y&finYear=2025-2026&month={month}&schemewise=P&state={state_code}&district={district_code}&block={block_code}&village={village_code}&schemeCode=-1"
-            soup = self.make_request(voucher_url)
-            
-            if soup:
-                voucher_data = {
-                    'state_code': state_code,
-                    'district_code': district_code,
-                    'block_code': block_code,
-                    'village_code': village_code,
-                    'month': month,
-                    'url': voucher_url,
-                    'content': str(soup)
-                }
-                vouchers.append(voucher_data)
-                self.scraped_data['vouchers'].append(voucher_data)
-                
-                # Extract voucher IDs and get details
-                self.extract_voucher_details(soup, state_code, district_code, block_code, village_code)
-        
-        self.logger.info(f"Scraped vouchers for village {village_code}")
-        return vouchers
-
-    def extract_voucher_details(self, soup: BeautifulSoup, state_code: str, district_code: str, block_code: str, village_code: str):
-        """Extract individual voucher details from voucher list page"""
-        if not soup:
-            return
-
-        # Look for voucher IDs in the page
-        voucher_links = soup.find_all('a', href=True)
-        voucher_ids = set()
-        
-        for link in voucher_links:
-            href = link.get('href', '')
-            if 'voucherID=' in href:
-                match = re.search(r'voucherID=(\d+)', href)
-                if match:
-                    voucher_ids.add(match.group(1))
-
-        for voucher_id in voucher_ids:
-            detail_url = f"{self.base_url}/paymentVoucherDetail.do?finYear=2025-2026&PRIEntity_code={village_code}&stateCode={state_code}&districtCode={district_code}&blockCode={block_code}&villageCode={village_code}&voucherID={voucher_id}"
-            detail_soup = self.make_request(detail_url)
-            
-            if detail_soup:
-                detail_data = {
-                    'state_code': state_code,
-                    'district_code': district_code,
-                    'block_code': block_code,
-                    'village_code': village_code,
-                    'voucher_id': voucher_id,
-                    'url': detail_url,
-                    'content': str(detail_soup)
-                }
-                self.scraped_data['voucher_details'].append(detail_data)
-
-    def save_data(self, output_dir: str = "egramswaraj_data"):
-        """Save scraped data to files"""
-        os.makedirs(output_dir, exist_ok=True)
-        
-        for data_type, data_list in self.scraped_data.items():
-            if data_list:
-                # Save as JSON
-                json_file = os.path.join(output_dir, f"{data_type}.json")
-                with open(json_file, 'w', encoding='utf-8') as f:
-                    json.dump(data_list, f, indent=2, ensure_ascii=False)
-                
-                # Save as CSV (for structured data)
-                if data_type != 'content':  # Skip raw HTML content for CSV
-                    csv_data = []
-                    for item in data_list:
-                        csv_row = {k: v for k, v in item.items() if k != 'content'}
-                        csv_data.append(csv_row)
-                    
-                    if csv_data:
-                        df = pd.DataFrame(csv_data)
-                        csv_file = os.path.join(output_dir, f"{data_type}.csv")
-                        df.to_csv(csv_file, index=False, encoding='utf-8')
-                
-                self.logger.info(f"Saved {len(data_list)} {data_type} records")
-
-    def run_full_scrape(self, state_code: str = "27"):
-        """Run the complete scraping process"""
-        self.logger.info("Starting full scrape of E-Gram Swaraj data")
-        
-        try:
-            # 1. Scrape state report
-            self.scrape_state_report()
-            
-            # 2. Scrape districts (424-456)
-            self.scrape_districts(state_code)
-            
-            # 3. Save all data
-            self.save_data()
-            
-            self.logger.info("Full scrape completed successfully")
-            self.print_summary()
-            
-        except Exception as e:
-            self.logger.error(f"Error during scraping: {str(e)}")
-            raise
-
-    def print_summary(self):
-        """Print summary of scraped data"""
-        print("\n" + "="*50)
-        print("SCRAPING SUMMARY")
-        print("="*50)
-        for data_type, data_list in self.scraped_data.items():
-            print(f"{data_type.capitalize()}: {len(data_list)} records")
-        print("="*50)
-
-
-# Usage example
 if __name__ == "__main__":
-    # Initialize scraper with 2-second delay between requests
-    scraper = EGramSwarajScraper(delay=2)
+    # Run the main scraper
+    scrape_egramswaraj_data()
     
-    # Run full scrape for state code 27
-    scraper.run_full_scrape(state_code="27")
+    # Run alternative method as well for comparison
+    print("\n" + "="*50)
+    create_alternative_csv_from_html()
     
-    print("Scraping completed. Check the 'egramswaraj_data' directory for output files.")
+    # Display some results
+    try:
+        import pandas as pd
+        
+        # Try to read and display the results
+        try:
+            df = pd.read_csv('egramswaraj_data.csv')
+            print(f"\nMain extraction results:")
+            print(f"Shape: {df.shape}")
+            print(df.head())
+        except:
+            print("Could not read main CSV file")
+            
+        try:
+            df_alt = pd.read_csv('egramswaraj_data_alt.csv')
+            print(f"\nAlternative extraction results:")
+            print(f"Shape: {df_alt.shape}")
+            print(df_alt.head())
+        except:
+            print("Could not read alternative CSV file")
+            
+    except ImportError:
+        print("\nInstall pandas to see data preview: pip install pandas")
