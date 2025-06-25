@@ -14,116 +14,15 @@ def clean_number(text):
     except:
         return 0
 
-def scrape_egramswaraj_data():
-    url = "https://egramswaraj.gov.in/FileRedirect.jsp?FD=SchemeWiseExpenditureReport2025-2026/0//27&name=27.html"
-    
-    try:
-        # Fetch the HTML content
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        # Save HTML content to file for reference
-        with open("index.html", "w", encoding="utf-8") as f:
-            f.write(response.text)
-        
-        # Parse HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find the main data table
-        table = soup.find('table')
-        if not table:
-            print("No table found in the HTML")
-            return
-        
-        # Extract data
-        rows = table.find_all('tr')
-        
-        # Prepare CSV data
-        csv_data = []
-        
-        # Process header row
-        header_row = ['State']
-        
-        # Add headers for each category
-        categories = [
-            'Zilla_Panchayat_RV', 'Zilla_Panchayat_PV', 'Zilla_Panchayat_CV', 'Zilla_Panchayat_JV',
-            'Zilla_Panchayat_Receipts', 'Zilla_Panchayat_Payments',
-            'Block_Panchayat_RV', 'Block_Panchayat_PV', 'Block_Panchayat_CV', 'Block_Panchayat_JV',
-            'Block_Panchayat_Receipts', 'Block_Panchayat_Payments',
-            'Village_Panchayat_RV', 'Village_Panchayat_PV', 'Village_Panchayat_CV', 'Village_Panchayat_JV',
-            'Village_Panchayat_Receipts', 'Village_Panchayat_Payments'
-        ]
-        
-        header_row.extend(categories)
-        csv_data.append(header_row)
-        
-        # Process data rows
-        print("Processing table rows...")
-        
-        # List of Indian states to identify data rows
-        indian_states = [
-            'ANDHRA PRADESH', 'ASSAM', 'CHHATTISGARH', 'HARYANA', 'HIMACHAL PRADESH',
-            'KERALA', 'MAHARASHTRA', 'ODISHA', 'PUNJAB', 'RAJASTHAN', 'SIKKIM',
-            'TAMIL NADU', 'TELANGANA', 'TRIPURA', 'UTTARAKHAND', 'UTTAR PRADESH',
-            'WEST BENGAL'
-        ]
-        
-        for row_idx, row in enumerate(rows):
-            cells = row.find_all(['td', 'th'])
-            
-            if len(cells) < 2:
-                continue
-                
-            first_cell = cells[0].get_text(strip=True).upper()
-            
-            # Check if this is a state row or total row
-            if first_cell in indian_states or first_cell == 'TOTAL':
-                print(f"Processing row: {first_cell}")
-                
-                row_data = [first_cell.title() if first_cell != 'TOTAL' else 'TOTAL']
-                
-                # Extract all cell data
-                for i in range(1, len(cells)):
-                    cell_text = cells[i].get_text(strip=True)
-                    row_data.append(clean_number(cell_text))
-                
-                # Ensure we have the right number of columns (pad with zeros if needed)
-                while len(row_data) < len(header_row):
-                    row_data.append(0)
-                
-                # Truncate if too many columns
-                if len(row_data) > len(header_row):
-                    row_data = row_data[:len(header_row)]
-                
-                csv_data.append(row_data)
-                print(f"Added row for {first_cell}: {len(row_data)} columns")
-        
-        # Save to CSV
-        with open('egramswaraj_data.csv', 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerows(csv_data)
-        
-        print(f"Data successfully saved to egramswaraj_data.csv")
-        print(f"Total rows: {len(csv_data)}")
-        print("HTML content also saved to index.html")
-        
-        # Display first few rows for verification
-        print("\nFirst few rows of extracted data:")
-        for i, row in enumerate(csv_data[:5]):
-            print(f"Row {i}: {row[:3]}...")  # Show first 3 columns
-            
-    except requests.RequestException as e:
-        print(f"Error fetching data: {e}")
-    except Exception as e:
-        print(f"Error processing data: {e}")
 
 def create_alternative_csv_from_html():
     """Alternative method - parse HTML directly and extract table data more systematically"""
     try:
         print("Trying alternative extraction method...")
         
-        with open("index.html", "r", encoding="utf-8") as f:
-            content = f.read()
+        result=requests.get('https://egramswaraj.gov.in/FileRedirect.jsp?FD=SummaryReport2025-2026&name=StateSummaryReport.html')
+        
+        content=result.text
         
         soup = BeautifulSoup(content, 'html.parser')
         
@@ -210,8 +109,6 @@ def create_alternative_csv_from_html():
         return None
 
 if __name__ == "__main__":
-    # Run the main scraper
-    scrape_egramswaraj_data()
     
     # Run alternative method as well for comparison
     print("\n" + "="*50)
